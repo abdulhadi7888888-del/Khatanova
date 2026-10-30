@@ -16,11 +16,45 @@ Return ONLY valid JSON (no markdown) in this exact shape:
 {"party":"name from the page title or empty string","rows":[{"date":"YYYY-MM-DD or null","detail":"detail text, Roman Urdu if the original is Urdu","qty":number or null,"rate":number or null,"debit":number,"credit":number,"balance":number or null}]}
 Rules: debit = Naam amount, credit = Jama amount, balance = Baqaya as written. Use 0 for an empty amount column. Never invent rows or numbers. If something is unreadable put "?" at the end of detail and use null/0.`;
 
+async function viaGemini(key, mime, data) {
+  const model = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
+  const r = await fetch('https://generativelanguage.googleapis.com/v1beta/models/' + model + ':generateContent?key=' + encodeURIComponent(key), {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      contents: [{ parts: [{ text: PROMPT }, { inline_data: { mime_type: mime, data } }] }],
+      generationConfig: { temperature: 0, responseMimeType: 'application/json', maxOutputTokens: 8000 }
+    })
+  });
+  const j = await r.json();
+  if (!r.ok) throw new Error((j.error && j.error.message) || 'Gemini request failed');
+  const parts = (((j.candidates || [])[0] || {}).content || {}).parts || [];
+  return parts.map(p => p.text || '').join('');
+}
+
+async function viaClaude(key, mime, data) {
+  const r = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01' },
+    body: JSON.stringify({
+      model: MODEL,
+      max_tokens: 8000,
+      messages: [{ role: 'user', content: [
+        { type: 'image', source: { type: 'base64', media_type: mime, data } },
+        { type: 'text', text: PROMPT }
+      ] }]
+    })
+  });
+  const j = await r.json();
+  if (!r.ok) throw new Error((j.error && j.error.message) || 'AI request failed');
+  return (j.content || []).map(c => c.text || '').join('');
+}
+
 module.exports = async (req, res) => {
   res.setHeader('Cache-Control', 'no-store');
   if (req.method !== 'POST') return res.status(405).json({ error: 'POST only' });
-  const key = process.env.ANTHROPIC_API_KEY;
-  if (!key) return res.status(500).json({ error: 'ANTHROPIC_API_KEY is not set on the server (Vercel > Settings > Environment Variables).' });
+  const gk = process.env.GEMINI_API_KEY, ak = process.env.ANTHROPIC_API_KEY;
+  if (!gk && !ak) return res.status(500).json({ error: 'No scan key set on the server. Add GEMINI_API_KEY (free) or ANTHROPIC_API_KEY in Vercel > Settings > Environment Variables, then redeploy. Or use "Paste data" instead.' });
   const secret = process.env.SCAN_SECRET;
   if (secret && req.headers['x-scan-key'] !== secret) return res.status(401).json({ error: 'Wrong or missing scan key.' });
   try {
@@ -28,21 +62,7 @@ module.exports = async (req, res) => {
     if (typeof body === 'string') body = JSON.parse(body);
     const m = /^data:(image\/(?:jpeg|png|webp));base64,(.+)$/.exec((body && body.image) || '');
     if (!m) return res.status(400).json({ error: 'Send {image: "data:image/jpeg;base64,..."}' });
-    const r = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01' },
-      body: JSON.stringify({
-        model: MODEL,
-        max_tokens: 8000,
-        messages: [{ role: 'user', content: [
-          { type: 'image', source: { type: 'base64', media_type: m[1], data: m[2] } },
-          { type: 'text', text: PROMPT }
-        ] }]
-      })
-    });
-    const j = await r.json();
-    if (!r.ok) return res.status(502).json({ error: (j.error && j.error.message) || 'AI request failed' });
-    const txt = (j.content || []).map(c => c.text || '').join('');
+    const txt = gk ? await viaGemini(gk, m[1], m[2]) : await viaClaude(ak, m[1], m[2]);
     const a = txt.indexOf('{'), b = txt.lastIndexOf('}');
     if (a < 0 || b < a) return res.status(502).json({ error: 'Could not read the page. Try a clearer, straight photo.' });
     const out = JSON.parse(txt.slice(a, b + 1));

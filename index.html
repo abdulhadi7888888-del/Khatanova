@@ -251,7 +251,7 @@ nav button.on{box-shadow:inset 0 3px 0 var(--or),0 -8px 16px -8px var(--or);text
 <div id="khv">
 <div class="tabs"><button data-t="c" class="on">Customers</button><button data-t="s">Suppliers</button><button data-t="all">All</button></div>
 <div class="flex" style="margin-bottom:10px;flex-wrap:nowrap"><input id="ks" type="search" placeholder="Search name" aria-label="Search party" style="flex:1;width:auto"><button class="ghost" id="kpdf">PDF</button></div>
-<div class="seg" style="margin-bottom:10px"><button class="ghost" id="kcam">&#128247; Take photo</button><button class="ghost" id="kscan">&#128444; Scan old khata</button></div><input type="file" id="scf" accept="image/*" multiple class="hide"><input type="file" id="scam" accept="image/*" capture="environment" class="hide">
+<div class="seg" style="margin-bottom:10px"><button class="ghost" id="kcam">&#128247; Take photo</button><button class="ghost" id="kscan">&#128444; Scan old khata</button></div><button class="ghost" id="kpaste" style="width:100%;margin-bottom:10px">Paste data from Claude / ChatGPT (free)</button><input type="file" id="scf" accept="image/*" multiple class="hide"><input type="file" id="scam" accept="image/*" capture="environment" class="hide">
 <div id="pl"></div>
 <button id="kfab">+ Add Customer</button>
 
@@ -854,16 +854,26 @@ function close(){el('scn').className='hide';document.body.style.overflow=''}
 function busy(m){el('scb').innerHTML=m?'<div class="scm"><div class="scs"></div>'+esc(m)+'</div>':''}
 function fail(m){el('scb').innerHTML='<div class="scm"><div>'+m+'</div><button id="scx">Close</button></div>';el('scx').onclick=close}
 function shrink(file,cb,err){var r=new FileReader();r.onerror=err;r.onload=function(){var i=new Image();i.onerror=err;i.onload=function(){var s=Math.min(1,2000/Math.max(i.width,i.height)),c=document.createElement('canvas');c.width=Math.round(i.width*s);c.height=Math.round(i.height*s);c.getContext('2d').drawImage(i,0,0,c.width,c.height);cb(c.toDataURL('image/jpeg',.88))};i.src=r.result};r.readAsDataURL(file)}
-function post(img,again){var h={'Content-Type':'application/json'},k='';try{k=localStorage.getItem('kn_scankey')||''}catch(e){}if(k)h['x-scan-key']=k;
+function post(img,again){var h={'Content-Type':'application/json'},k='',u='';try{k=localStorage.getItem('kn_scankey')||'';u=localStorage.getItem('kn_apikey')||''}catch(e){}if(k)h['x-scan-key']=k;if(u)h['x-user-api-key']=u;
  return fetch('/api/scan',{method:'POST',headers:h,body:JSON.stringify({image:img})}).then(function(r){return r.json().catch(function(){return{error:'Server not available. Scanning works only on the live (Vercel) site.'}}).then(function(j){
-  if(r.status===401&&!again){var p=prompt('Enter scan key');if(p){try{localStorage.setItem('kn_scankey',p)}catch(e){}return post(img,1)}}
+  if((j.code==='nokey'||j.code==='badkey')&&!again){if(j.code==='badkey'){try{localStorage.removeItem('kn_apikey')}catch(e){}}
+   var p=prompt((j.code==='badkey'?'That key is not valid. ':'')+'Scan ke liye Anthropic API key chahiye (console.anthropic.com > API Keys).\nYahan paste karein (sk-ant-...). Ye sirf aap ke phone mein save hogi:');
+   if(p&&p.trim()){try{localStorage.setItem('kn_apikey',p.trim())}catch(e){}return post(img,1)}throw new Error('API key not entered')}
+  if(r.status===401&&!again){var q=prompt('Enter scan key');if(q){try{localStorage.setItem('kn_scankey',q)}catch(e){}return post(img,1)}}
   if(!r.ok)throw new Error(j.error||'Scan failed');return j})})}
 el('kscan').onclick=function(){var f=el('scf');f.value='';f.click()};
 el('kcam').onclick=function(){var f=el('scam');f.value='';f.click()};
 el('scf').onchange=el('scam').onchange=function(){var fs=[].slice.call(this.files||[]);if(fs.length)run(fs)};
+var AIP='Read this photo of a handwritten khata (ledger) page. Columns right to left: date, detail, rate, Naam (debit), Jama (credit), Baqaya (balance). Dates may be stacked day/month/year (2-digit year = 20xx). Check each Baqaya = previous Baqaya + Naam - Jama and fix misread digits. Return ONLY JSON, no extra text: {"party":"name at top","rows":[{"date":"YYYY-MM-DD","detail":"detail in Roman Urdu","qty":null,"rate":null,"debit":0,"credit":0,"balance":0}]}. debit=Naam amount, credit=Jama amount, balance=Baqaya as written, 0 for empty. Keep every row in order. Do not invent numbers; add ? to detail if unreadable.';
+function pasteUI(){SP=[];open();el('scb').innerHTML='<div class="scp"><b>Paste data</b><div class="scc">1) Send your khata photo to Claude or ChatGPT with the prompt below. 2) Copy its answer and paste it here.</div><button class="ghost" id="scpc" style="margin-top:8px;width:100%">Copy the prompt</button><label style="margin-top:12px">Answer from AI</label><textarea id="scpt" rows="9" placeholder="{&quot;party&quot;:&quot;...&quot;,&quot;rows&quot;:[...]}" style="width:100%"></textarea><div class="seg" style="margin-top:10px"><button class="ghost" id="scx2">Cancel</button><button id="scgo">Continue</button></div></div>'}
+function pasteGo(){var t=(el('scpt').value||'').trim(),a=t.search(/[\[{]/);if(a<0){toast('Paste the JSON answer first');return}
+ var z=Math.max(t.lastIndexOf('}'),t.lastIndexOf(']'));var j;try{j=JSON.parse(t.slice(a,z+1))}catch(e){toast('Could not read this text. Copy the full JSON answer');return}
+ var pages=Array.isArray(j)?(j[0]&&j[0].rows?j:[{party:'',rows:j}]):(j.pages||[j]);SP=[];pages.forEach(function(q,i){if(q&&Array.isArray(q.rows))addPage(q,i+1)});
+ if(!SP.length){toast('No rows found in this text');return}render([])}
+el('kpaste').onclick=pasteUI;
 function run(files){SP=[];open();var fails=[],i=0;
  (function next(){
-  if(i>=files.length){busy('');if(!SP.length){fail('Could not read any page. Take a clearer, straight photo in good light.'+(fails.length?'<br><small>'+esc(fails[0])+'</small>':''));return}render(fails);return}
+  if(i>=files.length){busy('');if(!SP.length){fail(fails.length?'<b>Scan failed</b><br>'+esc(fails[0].replace(/^Page \d+: /,'')):'Could not read any page. Take a clearer, straight photo in good light.');return}render(fails);return}
   var pg=++i;busy('Reading page '+pg+' of '+files.length+'... (10-30 sec each)');
   shrink(files[pg-1],function(img){post(img).then(function(j){addPage(j,pg);next()}).catch(function(e){fails.push('Page '+pg+': '+(e.message||'failed'));next()})},function(){fails.push('Page '+pg+': cannot open photo');next()})})()}
 function addPage(j,pg){var nm=(j.party||'').trim(),P=null;
@@ -902,6 +912,8 @@ el('scb').onclick=function(e){var t=e.target.closest('button');if(!t)return;
  var dl=t.getAttribute('data-del');if(dl){var a=dl.split(':');SP[+a[0]].rows.splice(+a[1],1);var y2=el('scb').scrollTop;render();el('scb').scrollTop=y2;return}
  var fx=t.getAttribute('data-fix');if(fx){var b=fx.split(':'),Q=SP[+b[0]];fixRow(Q,+b[1],prevOf(Q,+b[1]));var y3=el('scb').scrollTop;render();el('scb').scrollTop=y3;return}
  if(t.getAttribute('data-fixall')){SP.forEach(function(Q){var run=0;Q.rows.forEach(function(r,i){if(r.b!=null&&Math.abs(r.b-fmt(run+num(r.db)-num(r.cr)))>0.5)fixRow(Q,i,run);run=fmt(run+num(r.db)-num(r.cr))})});var y4=el('scb').scrollTop;render();el('scb').scrollTop=y4;toast('Fixed using book balance');return}
+ if(t.id==='scpc'){try{navigator.clipboard.writeText(AIP).then(function(){toast('Prompt copied')},function(){prompt('Copy this prompt',AIP)})}catch(e){prompt('Copy this prompt',AIP)}return}
+ if(t.id==='scx2'){close();return}if(t.id==='scgo'){pasteGo();return}
  if(t.id==='scback'){if(confirm('Discard this scan?'))close();return}
  if(t.id==='scsave')save2()};
 function note(r){var n=(r.n||'').trim(),q=num(r.q),rt=num(r.r);if(q&&rt)n=(n?n+' | ':'')+q+' kg x '+rt;return n}
