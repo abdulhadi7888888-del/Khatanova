@@ -1,0 +1,5 @@
+User-agent: *
+Allow: /
+Disallow: /api/
+
+Sitemap: https://khatanova-sepia.vercel.app/sitemap.xml
